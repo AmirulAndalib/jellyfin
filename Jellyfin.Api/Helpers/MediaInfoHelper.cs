@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Globalization;
 using System.Linq;
 using System.Net;
@@ -24,6 +24,7 @@ using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.MediaInfo;
 using MediaBrowser.Model.Session;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Api.Helpers;
@@ -76,21 +77,17 @@ public class MediaInfoHelper
     /// <summary>
     /// Get playback info.
     /// </summary>
-    /// <param name="id">Item id.</param>
-    /// <param name="userId">User Id.</param>
+    /// <param name="item">The item.</param>
+    /// <param name="user">The user.</param>
     /// <param name="mediaSourceId">Media source id.</param>
     /// <param name="liveStreamId">Live stream id.</param>
     /// <returns>A <see cref="Task"/> containing the <see cref="PlaybackInfoResponse"/>.</returns>
     public async Task<PlaybackInfoResponse> GetPlaybackInfo(
-        Guid id,
-        Guid? userId,
+        BaseItem item,
+        User? user,
         string? mediaSourceId = null,
         string? liveStreamId = null)
     {
-        var user = userId.IsNullOrEmpty()
-            ? null
-            : _userManager.GetUserById(userId.Value);
-        var item = _libraryManager.GetItemById(id);
         var result = new PlaybackInfoResponse();
 
         MediaSourceInfo[] mediaSources;
@@ -159,6 +156,7 @@ public class MediaInfoHelper
     /// <param name="enableTranscoding">Enable transcoding.</param>
     /// <param name="allowVideoStreamCopy">Allow video stream copy.</param>
     /// <param name="allowAudioStreamCopy">Allow audio stream copy.</param>
+    /// <param name="alwaysBurnInSubtitleWhenTranscoding">Always burn-in subtitle when transcoding.</param>
     /// <param name="ipAddress">Requesting IP address.</param>
     public void SetDeviceSpecificData(
         BaseItem item,
@@ -178,6 +176,7 @@ public class MediaInfoHelper
         bool enableTranscoding,
         bool allowVideoStreamCopy,
         bool allowAudioStreamCopy,
+        bool alwaysBurnInSubtitleWhenTranscoding,
         IPAddress ipAddress)
     {
         var streamBuilder = new StreamBuilder(_mediaEncoder, _logger);
@@ -191,7 +190,8 @@ public class MediaInfoHelper
             Profile = profile,
             MaxAudioChannels = maxAudioChannels,
             AllowAudioStreamCopy = allowAudioStreamCopy,
-            AllowVideoStreamCopy = allowVideoStreamCopy
+            AllowVideoStreamCopy = allowVideoStreamCopy,
+            AlwaysBurnInSubtitleWhenTranscoding = alwaysBurnInSubtitleWhenTranscoding,
         };
 
         if (string.Equals(mediaSourceId, mediaSource.Id, StringComparison.OrdinalIgnoreCase))
@@ -293,6 +293,10 @@ public class MediaInfoHelper
                 mediaSource.TranscodingUrl += "&allowAudioStreamCopy=false";
                 mediaSource.TranscodingContainer = streamInfo.Container;
                 mediaSource.TranscodingSubProtocol = streamInfo.SubProtocol;
+                if (streamInfo.AlwaysBurnInSubtitleWhenTranscoding)
+                {
+                    mediaSource.TranscodingUrl += "&alwaysBurnInSubtitleWhenTranscoding=true";
+                }
             }
             else
             {
@@ -309,6 +313,11 @@ public class MediaInfoHelper
                     if (!allowAudioStreamCopy)
                     {
                         mediaSource.TranscodingUrl += "&allowAudioStreamCopy=false";
+                    }
+
+                    if (streamInfo.AlwaysBurnInSubtitleWhenTranscoding)
+                    {
+                        mediaSource.TranscodingUrl += "&alwaysBurnInSubtitleWhenTranscoding=true";
                     }
                 }
             }
@@ -402,7 +411,8 @@ public class MediaInfoHelper
 
         if (profile is not null)
         {
-            var item = _libraryManager.GetItemById(request.ItemId);
+            var item = _libraryManager.GetItemById<BaseItem>(request.ItemId)
+                ?? throw new ResourceNotFoundException();
 
             SetDeviceSpecificData(
                 item,
@@ -422,6 +432,7 @@ public class MediaInfoHelper
                 true,
                 true,
                 true,
+                request.AlwaysBurnInSubtitleWhenTranscoding,
                 httpContext.GetNormalizedRemoteIP());
         }
         else

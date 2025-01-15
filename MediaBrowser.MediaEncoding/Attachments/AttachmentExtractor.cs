@@ -89,15 +89,29 @@ namespace MediaBrowser.MediaEncoding.Attachments
             string outputPath,
             CancellationToken cancellationToken)
         {
-            using (await _semaphoreLocks.LockAsync(outputPath, cancellationToken).ConfigureAwait(false))
+            var shouldExtractOneByOne = mediaSource.MediaAttachments.Any(a => !string.IsNullOrEmpty(a.FileName)
+                                                                              && (a.FileName.Contains('/', StringComparison.OrdinalIgnoreCase) || a.FileName.Contains('\\', StringComparison.OrdinalIgnoreCase)));
+            if (shouldExtractOneByOne)
             {
-                if (!Directory.Exists(outputPath))
+                var attachmentIndexes = mediaSource.MediaAttachments.Select(a => a.Index);
+                foreach (var i in attachmentIndexes)
                 {
-                    await ExtractAllAttachmentsInternal(
-                        _mediaEncoder.GetInputArgument(inputFile, mediaSource),
-                        outputPath,
-                        false,
-                        cancellationToken).ConfigureAwait(false);
+                    var newName = Path.Join(outputPath, i.ToString(CultureInfo.InvariantCulture));
+                    await ExtractAttachment(inputFile, mediaSource, i, newName, cancellationToken).ConfigureAwait(false);
+                }
+            }
+            else
+            {
+                using (await _semaphoreLocks.LockAsync(outputPath, cancellationToken).ConfigureAwait(false))
+                {
+                    if (!Directory.Exists(outputPath))
+                    {
+                        await ExtractAllAttachmentsInternal(
+                            _mediaEncoder.GetInputArgument(inputFile, mediaSource),
+                            outputPath,
+                            false,
+                            cancellationToken).ConfigureAwait(false);
+                    }
                 }
             }
         }
@@ -247,7 +261,7 @@ namespace MediaBrowser.MediaEncoding.Attachments
             MediaSourceInfo mediaSource,
             CancellationToken cancellationToken)
         {
-            var outputFileLocks = new List<AsyncKeyedLockReleaser<string>>();
+            var outputFileLocks = new List<IDisposable>();
             var extractableAttachmentIds = new List<int>();
 
             try
@@ -256,22 +270,21 @@ namespace MediaBrowser.MediaEncoding.Attachments
                 {
                     var outputPath = GetAttachmentCachePath(mediaPath, mediaSource, attachment.Index);
 
-                    var @outputFileLock = _semaphoreLocks.GetOrAdd(outputPath);
-                    await @outputFileLock.SemaphoreSlim.WaitAsync(cancellationToken).ConfigureAwait(false);
+                    var releaser = await _semaphoreLocks.LockAsync(outputPath, cancellationToken).ConfigureAwait(false);
 
                     if (File.Exists(outputPath))
                     {
-                        @outputFileLock.Dispose();
+                        releaser.Dispose();
                         continue;
                     }
 
-                    outputFileLocks.Add(@outputFileLock);
+                    outputFileLocks.Add(releaser);
                     extractableAttachmentIds.Add(attachment.Index);
                 }
 
                 if (extractableAttachmentIds.Count > 0)
                 {
-                    await CacheAllAttachmentsInternal(mediaPath, inputFile, mediaSource, extractableAttachmentIds, cancellationToken).ConfigureAwait(false);
+                    await CacheAllAttachmentsInternal(mediaPath, _mediaEncoder.GetInputArgument(inputFile, mediaSource), mediaSource, extractableAttachmentIds, cancellationToken).ConfigureAwait(false);
                 }
             }
             catch (Exception ex)
@@ -280,10 +293,7 @@ namespace MediaBrowser.MediaEncoding.Attachments
             }
             finally
             {
-                foreach (var @outputFileLock in outputFileLocks)
-                {
-                    @outputFileLock.Dispose();
-                }
+                outputFileLocks.ForEach(x => x.Dispose());
             }
         }
 
@@ -313,7 +323,7 @@ namespace MediaBrowser.MediaEncoding.Attachments
 
             processArgs += string.Format(
                 CultureInfo.InvariantCulture,
-                " -i \"{0}\" -t 0 -f null null",
+                " -i {0} -t 0 -f null null",
                 inputFile);
 
             int exitCode;

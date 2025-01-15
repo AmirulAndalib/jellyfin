@@ -11,6 +11,7 @@ using Jellyfin.Extensions;
 using MediaBrowser.Common.Configuration;
 using MediaBrowser.Common.Extensions;
 using MediaBrowser.Controller.Configuration;
+using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.MediaEncoding;
 using MediaBrowser.Controller.Streaming;
@@ -18,6 +19,7 @@ using MediaBrowser.Model.Dlna;
 using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.Entities;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.Net.Http.Headers;
 
 namespace Jellyfin.Api.Helpers;
@@ -107,7 +109,8 @@ public static class StreamingHelpers
                                           ?? state.SupportedSubtitleCodecs.FirstOrDefault();
         }
 
-        var item = libraryManager.GetItemById(streamingRequest.Id);
+        var item = libraryManager.GetItemById<BaseItem>(streamingRequest.Id)
+            ?? throw new ResourceNotFoundException();
 
         state.IsInputVideo = item.MediaType == MediaType.Video;
 
@@ -125,7 +128,7 @@ public static class StreamingHelpers
 
             if (mediaSource is null)
             {
-                var mediaSources = await mediaSourceManager.GetPlaybackMediaSources(libraryManager.GetItemById(streamingRequest.Id), null, false, false, cancellationToken).ConfigureAwait(false);
+                var mediaSources = await mediaSourceManager.GetPlaybackMediaSources(libraryManager.GetItemById<BaseItem>(streamingRequest.Id), null, false, false, cancellationToken).ConfigureAwait(false);
 
                 mediaSource = string.IsNullOrEmpty(streamingRequest.MediaSourceId)
                     ? mediaSources[0]
@@ -142,6 +145,12 @@ public static class StreamingHelpers
             var liveStreamInfo = await mediaSourceManager.GetLiveStreamWithDirectStreamProvider(streamingRequest.LiveStreamId, cancellationToken).ConfigureAwait(false);
             mediaSource = liveStreamInfo.Item1;
             state.DirectStreamProvider = liveStreamInfo.Item2;
+
+            // Cap the max bitrate when it is too high. This is usually due to ffmpeg is unable to probe the source liveTV streams' bitrate.
+            if (mediaSource.FallbackMaxStreamingBitrate is not null && streamingRequest.VideoBitRate is not null)
+            {
+                streamingRequest.VideoBitRate = Math.Min(streamingRequest.VideoBitRate.Value, mediaSource.FallbackMaxStreamingBitrate.Value);
+            }
         }
 
         var encodingOptions = serverConfigurationManager.GetEncodingOptions();
@@ -163,6 +172,9 @@ public static class StreamingHelpers
         }
 
         var outputAudioCodec = streamingRequest.AudioCodec;
+        state.OutputAudioCodec = outputAudioCodec;
+        state.OutputContainer = (containerInternal ?? string.Empty).TrimStart('.');
+        state.OutputAudioChannels = encodingHelper.GetNumAudioChannelsParam(state, state.AudioStream, state.OutputAudioCodec);
         if (EncodingHelper.LosslessAudioCodecs.Contains(outputAudioCodec))
         {
             state.OutputAudioBitrate = state.AudioStream.BitRate ?? 0;
@@ -176,10 +188,6 @@ public static class StreamingHelpers
         {
             containerInternal = ".pcm";
         }
-
-        state.OutputAudioCodec = outputAudioCodec;
-        state.OutputContainer = (containerInternal ?? string.Empty).TrimStart('.');
-        state.OutputAudioChannels = encodingHelper.GetNumAudioChannelsParam(state, state.AudioStream, state.OutputAudioCodec);
 
         if (state.VideoRequest is not null)
         {
@@ -211,11 +219,17 @@ public static class StreamingHelpers
                 }
                 else
                 {
+                    var h264EquivalentBitrate = EncodingHelper.ScaleBitrate(
+                        state.OutputVideoBitrate.Value,
+                        state.ActualOutputVideoCodec,
+                        "h264");
                     var resolution = ResolutionNormalizer.Normalize(
                         state.VideoStream?.BitRate,
                         state.OutputVideoBitrate.Value,
+                        h264EquivalentBitrate,
                         state.VideoRequest.MaxWidth,
-                        state.VideoRequest.MaxHeight);
+                        state.VideoRequest.MaxHeight,
+                        state.TargetFramerate);
 
                     state.VideoRequest.MaxWidth = resolution.MaxWidth;
                     state.VideoRequest.MaxHeight = resolution.MaxHeight;
