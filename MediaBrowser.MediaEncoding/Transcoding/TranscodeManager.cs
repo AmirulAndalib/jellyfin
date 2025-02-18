@@ -51,6 +51,8 @@ public sealed class TranscodeManager : ITranscodeManager, IDisposable
         o.PoolInitialFill = 1;
     });
 
+    private readonly Version _maxFFmpegCkeyPauseSupported = new Version(6, 1);
+
     /// <summary>
     /// Initializes a new instance of the <see cref="TranscodeManager"/> class.
     /// </summary>
@@ -235,15 +237,6 @@ public sealed class TranscodeManager : ITranscodeManager, IDisposable
         if (delete(job.Path!))
         {
             await DeletePartialStreamFiles(job.Path!, job.Type, 0, 1500).ConfigureAwait(false);
-            if (job.MediaSource?.VideoType == VideoType.Dvd || job.MediaSource?.VideoType == VideoType.BluRay)
-            {
-                var concatFilePath = Path.Join(_serverConfigurationManager.GetTranscodePath(), job.MediaSource.Id + ".concat");
-                if (File.Exists(concatFilePath))
-                {
-                    _logger.LogInformation("Deleting ffmpeg concat configuration at {Path}", concatFilePath);
-                    File.Delete(concatFilePath);
-                }
-            }
         }
 
         if (closeLiveStream && !string.IsNullOrWhiteSpace(job.LiveStreamId))
@@ -321,7 +314,7 @@ public sealed class TranscodeManager : ITranscodeManager, IDisposable
             }
             catch (IOException ex)
             {
-                (exs ??= new List<Exception>(4)).Add(ex);
+                (exs ??= new List<Exception>()).Add(ex);
                 _logger.LogError(ex, "Error deleting HLS file {Path}", file);
             }
         }
@@ -359,12 +352,7 @@ public sealed class TranscodeManager : ITranscodeManager, IDisposable
         {
             var audioCodec = state.ActualOutputAudioCodec;
             var videoCodec = state.ActualOutputVideoCodec;
-            var hardwareAccelerationTypeString = _serverConfigurationManager.GetEncodingOptions().HardwareAccelerationType;
-            HardwareEncodingType? hardwareAccelerationType = null;
-            if (Enum.TryParse<HardwareEncodingType>(hardwareAccelerationTypeString, out var parsedHardwareAccelerationType))
-            {
-                hardwareAccelerationType = parsedHardwareAccelerationType;
-            }
+            var hardwareAccelerationType = _serverConfigurationManager.GetEncodingOptions().HardwareAccelerationType;
 
             _sessionManager.ReportTranscodingInfo(deviceId, new TranscodingInfo
             {
@@ -419,7 +407,7 @@ public sealed class TranscodeManager : ITranscodeManager, IDisposable
             var attachmentPath = Path.Combine(_appPaths.CachePath, "attachments", state.MediaSource.Id);
             if (state.MediaSource.VideoType == VideoType.Dvd || state.MediaSource.VideoType == VideoType.BluRay)
             {
-                var concatPath = Path.Join(_serverConfigurationManager.GetTranscodePath(), state.MediaSource.Id + ".concat");
+                var concatPath = Path.Join(_appPaths.CachePath, "concat", state.MediaSource.Id + ".concat");
                 await _attachmentExtractor.ExtractAllAttachments(concatPath, state.MediaSource, attachmentPath, cancellationTokenSource.Token).ConfigureAwait(false);
             }
             else
@@ -479,6 +467,11 @@ public sealed class TranscodeManager : ITranscodeManager, IDisposable
                 : "FFmpeg.DirectStream-";
         }
 
+        if (state.VideoRequest is null && EncodingHelper.IsCopyCodec(state.OutputAudioCodec))
+        {
+            logFilePrefix = "FFmpeg.Remux-";
+        }
+
         var logFilePath = Path.Combine(
             _serverConfigurationManager.ApplicationPaths.LogDirectoryPath,
             $"{logFilePrefix}{DateTime.Now:yyyy-MM-dd_HH-mm-ss}_{state.Request.MediaSourceId}_{Guid.NewGuid().ToString()[..8]}.log");
@@ -492,12 +485,11 @@ public sealed class TranscodeManager : ITranscodeManager, IDisposable
             IODefaults.FileStreamBufferSize,
             FileOptions.Asynchronous);
 
-        var commandLineLogMessage = process.StartInfo.FileName + " " + process.StartInfo.Arguments;
+        await JsonSerializer.SerializeAsync(logStream, state.MediaSource, cancellationToken: cancellationTokenSource.Token).ConfigureAwait(false);
         var commandLineLogMessageBytes = Encoding.UTF8.GetBytes(
-            JsonSerializer.Serialize(state.MediaSource)
+            Environment.NewLine
             + Environment.NewLine
-            + Environment.NewLine
-            + commandLineLogMessage
+            + process.StartInfo.FileName + " " + process.StartInfo.Arguments
             + Environment.NewLine
             + Environment.NewLine);
 
@@ -546,6 +538,7 @@ public sealed class TranscodeManager : ITranscodeManager, IDisposable
         if (!transcodingJob.HasExited)
         {
             StartThrottler(state, transcodingJob);
+            StartSegmentCleaner(state, transcodingJob);
         }
         else if (transcodingJob.ExitCode != 0)
         {
@@ -559,7 +552,9 @@ public sealed class TranscodeManager : ITranscodeManager, IDisposable
 
     private void StartThrottler(StreamState state, TranscodingJob transcodingJob)
     {
-        if (EnableThrottling(state))
+        if (EnableThrottling(state)
+            && (_mediaEncoder.IsPkeyPauseSupported
+                || _mediaEncoder.EncoderVersion <= _maxFFmpegCkeyPauseSupported))
         {
             transcodingJob.TranscodingThrottler = new TranscodingThrottler(transcodingJob, _loggerFactory.CreateLogger<TranscodingThrottler>(), _serverConfigurationManager, _fileSystem, _mediaEncoder);
             transcodingJob.TranscodingThrottler.Start();
@@ -572,6 +567,22 @@ public sealed class TranscodeManager : ITranscodeManager, IDisposable
            && state.RunTimeTicks.Value >= TimeSpan.FromMinutes(5).Ticks
            && state.IsInputVideo
            && state.VideoType == VideoType.VideoFile;
+
+    private void StartSegmentCleaner(StreamState state, TranscodingJob transcodingJob)
+    {
+        if (EnableSegmentCleaning(state))
+        {
+            transcodingJob.TranscodingSegmentCleaner = new TranscodingSegmentCleaner(transcodingJob, _loggerFactory.CreateLogger<TranscodingSegmentCleaner>(), _serverConfigurationManager, _fileSystem, _mediaEncoder, state.SegmentLength);
+            transcodingJob.TranscodingSegmentCleaner.Start();
+        }
+    }
+
+    private static bool EnableSegmentCleaning(StreamState state)
+        => state.InputProtocol is MediaProtocol.File or MediaProtocol.Http
+           && state.IsInputVideo
+           && state.TranscodingType == TranscodingJobType.Hls
+           && state.RunTimeTicks.HasValue
+           && state.RunTimeTicks.Value >= TimeSpan.FromMinutes(5).Ticks;
 
     private TranscodingJob OnTranscodeBeginning(
         string path,

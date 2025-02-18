@@ -77,8 +77,8 @@ public class UserLibraryController : BaseJellyfinApiController
         [FromQuery] Guid? userId,
         [FromRoute, Required] Guid itemId)
     {
-        var requestUserId = RequestHelpers.GetUserId(User, userId);
-        var user = _userManager.GetUserById(requestUserId);
+        userId = RequestHelpers.GetUserId(User, userId);
+        var user = _userManager.GetUserById(userId.Value);
         if (user is null)
         {
             return NotFound();
@@ -86,18 +86,10 @@ public class UserLibraryController : BaseJellyfinApiController
 
         var item = itemId.IsEmpty()
             ? _libraryManager.GetUserRootFolder()
-            : _libraryManager.GetItemById(itemId);
-
+            : _libraryManager.GetItemById<BaseItem>(itemId, user);
         if (item is null)
         {
             return NotFound();
-        }
-
-        if (item is not UserRootFolder
-            // Check the item is visible for the user
-            && !item.IsVisible(user))
-        {
-            return Unauthorized($"{user.Username} is not permitted to access item {item.Name}.");
         }
 
         await RefreshItemOnDemandIfNeeded(item).ConfigureAwait(false);
@@ -133,8 +125,8 @@ public class UserLibraryController : BaseJellyfinApiController
     [ProducesResponseType(StatusCodes.Status200OK)]
     public ActionResult<BaseItemDto> GetRootFolder([FromQuery] Guid? userId)
     {
-        var requestUserId = RequestHelpers.GetUserId(User, userId);
-        var user = _userManager.GetUserById(requestUserId);
+        userId = RequestHelpers.GetUserId(User, userId);
+        var user = _userManager.GetUserById(userId.Value);
         if (user is null)
         {
             return NotFound();
@@ -172,8 +164,8 @@ public class UserLibraryController : BaseJellyfinApiController
         [FromQuery] Guid? userId,
         [FromRoute, Required] Guid itemId)
     {
-        var requestUserId = RequestHelpers.GetUserId(User, userId);
-        var user = _userManager.GetUserById(requestUserId);
+        userId = RequestHelpers.GetUserId(User, userId);
+        var user = _userManager.GetUserById(userId.Value);
         if (user is null)
         {
             return NotFound();
@@ -181,18 +173,10 @@ public class UserLibraryController : BaseJellyfinApiController
 
         var item = itemId.IsEmpty()
             ? _libraryManager.GetUserRootFolder()
-            : _libraryManager.GetItemById(itemId);
-
+            : _libraryManager.GetItemById<BaseItem>(itemId, user);
         if (item is null)
         {
             return NotFound();
-        }
-
-        if (item is not UserRootFolder
-            // Check the item is visible for the user
-            && !item.IsVisible(user))
-        {
-            return Unauthorized($"{user.Username} is not permitted to access item {item.Name}.");
         }
 
         var items = await _libraryManager.GetIntros(item, user).ConfigureAwait(false);
@@ -231,8 +215,8 @@ public class UserLibraryController : BaseJellyfinApiController
         [FromQuery] Guid? userId,
         [FromRoute, Required] Guid itemId)
     {
-        var requestUserId = RequestHelpers.GetUserId(User, userId);
-        var user = _userManager.GetUserById(requestUserId);
+        userId = RequestHelpers.GetUserId(User, userId);
+        var user = _userManager.GetUserById(userId.Value);
         if (user is null)
         {
             return NotFound();
@@ -240,18 +224,10 @@ public class UserLibraryController : BaseJellyfinApiController
 
         var item = itemId.IsEmpty()
             ? _libraryManager.GetUserRootFolder()
-            : _libraryManager.GetItemById(itemId);
-
+            : _libraryManager.GetItemById<BaseItem>(itemId, user);
         if (item is null)
         {
             return NotFound();
-        }
-
-        if (item is not UserRootFolder
-            // Check the item is visible for the user
-            && !item.IsVisible(user))
-        {
-            return Unauthorized($"{user.Username} is not permitted to access item {item.Name}.");
         }
 
         return MarkFavorite(user, item, true);
@@ -286,8 +262,8 @@ public class UserLibraryController : BaseJellyfinApiController
         [FromQuery] Guid? userId,
         [FromRoute, Required] Guid itemId)
     {
-        var requestUserId = RequestHelpers.GetUserId(User, userId);
-        var user = _userManager.GetUserById(requestUserId);
+        userId = RequestHelpers.GetUserId(User, userId);
+        var user = _userManager.GetUserById(userId.Value);
         if (user is null)
         {
             return NotFound();
@@ -295,18 +271,10 @@ public class UserLibraryController : BaseJellyfinApiController
 
         var item = itemId.IsEmpty()
             ? _libraryManager.GetUserRootFolder()
-            : _libraryManager.GetItemById(itemId);
-
+            : _libraryManager.GetItemById<BaseItem>(itemId, user);
         if (item is null)
         {
             return NotFound();
-        }
-
-        if (item is not UserRootFolder
-            // Check the item is visible for the user
-            && !item.IsVisible(user))
-        {
-            return Unauthorized($"{user.Username} is not permitted to access item {item.Name}.");
         }
 
         return MarkFavorite(user, item, false);
@@ -337,12 +305,12 @@ public class UserLibraryController : BaseJellyfinApiController
     /// <returns>An <see cref="OkResult"/> containing the <see cref="UserItemDataDto"/>.</returns>
     [HttpDelete("UserItems/{itemId}/Rating")]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    public ActionResult<UserItemDataDto> DeleteUserItemRating(
+    public ActionResult<UserItemDataDto?> DeleteUserItemRating(
         [FromQuery] Guid? userId,
         [FromRoute, Required] Guid itemId)
     {
-        var requestUserId = RequestHelpers.GetUserId(User, userId);
-        var user = _userManager.GetUserById(requestUserId);
+        userId = RequestHelpers.GetUserId(User, userId);
+        var user = _userManager.GetUserById(userId.Value);
         if (user is null)
         {
             return NotFound();
@@ -350,18 +318,10 @@ public class UserLibraryController : BaseJellyfinApiController
 
         var item = itemId.IsEmpty()
             ? _libraryManager.GetUserRootFolder()
-            : _libraryManager.GetItemById(itemId);
-
+            : _libraryManager.GetItemById<BaseItem>(itemId, user);
         if (item is null)
         {
             return NotFound();
-        }
-
-        if (item is not UserRootFolder
-            // Check the item is visible for the user
-            && !item.IsVisible(user))
-        {
-            return Unauthorized($"{user.Username} is not permitted to access item {item.Name}.");
         }
 
         return UpdateUserItemRatingInternal(user, item, null);
@@ -378,7 +338,7 @@ public class UserLibraryController : BaseJellyfinApiController
     [ProducesResponseType(StatusCodes.Status200OK)]
     [Obsolete("Kept for backwards compatibility")]
     [ApiExplorerSettings(IgnoreApi = true)]
-    public ActionResult<UserItemDataDto> DeleteUserItemRatingLegacy(
+    public ActionResult<UserItemDataDto?> DeleteUserItemRatingLegacy(
         [FromRoute, Required] Guid userId,
         [FromRoute, Required] Guid itemId)
         => DeleteUserItemRating(userId, itemId);
@@ -393,13 +353,13 @@ public class UserLibraryController : BaseJellyfinApiController
     /// <returns>An <see cref="OkResult"/> containing the <see cref="UserItemDataDto"/>.</returns>
     [HttpPost("UserItems/{itemId}/Rating")]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    public ActionResult<UserItemDataDto> UpdateUserItemRating(
+    public ActionResult<UserItemDataDto?> UpdateUserItemRating(
         [FromQuery] Guid? userId,
         [FromRoute, Required] Guid itemId,
         [FromQuery] bool? likes)
     {
-        var requestUserId = RequestHelpers.GetUserId(User, userId);
-        var user = _userManager.GetUserById(requestUserId);
+        userId = RequestHelpers.GetUserId(User, userId);
+        var user = _userManager.GetUserById(userId.Value);
         if (user is null)
         {
             return NotFound();
@@ -407,18 +367,10 @@ public class UserLibraryController : BaseJellyfinApiController
 
         var item = itemId.IsEmpty()
             ? _libraryManager.GetUserRootFolder()
-            : _libraryManager.GetItemById(itemId);
-
+            : _libraryManager.GetItemById<BaseItem>(itemId, user);
         if (item is null)
         {
             return NotFound();
-        }
-
-        if (item is not UserRootFolder
-            // Check the item is visible for the user
-            && !item.IsVisible(user))
-        {
-            return Unauthorized($"{user.Username} is not permitted to access item {item.Name}.");
         }
 
         return UpdateUserItemRatingInternal(user, item, likes);
@@ -436,7 +388,7 @@ public class UserLibraryController : BaseJellyfinApiController
     [ProducesResponseType(StatusCodes.Status200OK)]
     [Obsolete("Kept for backwards compatibility")]
     [ApiExplorerSettings(IgnoreApi = true)]
-    public ActionResult<UserItemDataDto> UpdateUserItemRatingLegacy(
+    public ActionResult<UserItemDataDto?> UpdateUserItemRatingLegacy(
         [FromRoute, Required] Guid userId,
         [FromRoute, Required] Guid itemId,
         [FromQuery] bool? likes)
@@ -455,8 +407,8 @@ public class UserLibraryController : BaseJellyfinApiController
         [FromQuery] Guid? userId,
         [FromRoute, Required] Guid itemId)
     {
-        var requestUserId = RequestHelpers.GetUserId(User, userId);
-        var user = _userManager.GetUserById(requestUserId);
+        userId = RequestHelpers.GetUserId(User, userId);
+        var user = _userManager.GetUserById(userId.Value);
         if (user is null)
         {
             return NotFound();
@@ -464,18 +416,10 @@ public class UserLibraryController : BaseJellyfinApiController
 
         var item = itemId.IsEmpty()
             ? _libraryManager.GetUserRootFolder()
-            : _libraryManager.GetItemById(itemId);
-
+            : _libraryManager.GetItemById<BaseItem>(itemId, user);
         if (item is null)
         {
             return NotFound();
-        }
-
-        if (item is not UserRootFolder
-            // Check the item is visible for the user
-            && !item.IsVisible(user))
-        {
-            return Unauthorized($"{user.Username} is not permitted to access item {item.Name}.");
         }
 
         var dtoOptions = new DtoOptions().AddClientFields(User);
@@ -519,8 +463,8 @@ public class UserLibraryController : BaseJellyfinApiController
         [FromQuery] Guid? userId,
         [FromRoute, Required] Guid itemId)
     {
-        var requestUserId = RequestHelpers.GetUserId(User, userId);
-        var user = _userManager.GetUserById(requestUserId);
+        userId = RequestHelpers.GetUserId(User, userId);
+        var user = _userManager.GetUserById(userId.Value);
         if (user is null)
         {
             return NotFound();
@@ -528,18 +472,10 @@ public class UserLibraryController : BaseJellyfinApiController
 
         var item = itemId.IsEmpty()
             ? _libraryManager.GetUserRootFolder()
-            : _libraryManager.GetItemById(itemId);
-
+            : _libraryManager.GetItemById<BaseItem>(itemId, user);
         if (item is null)
         {
             return NotFound();
-        }
-
-        if (item is not UserRootFolder
-            // Check the item is visible for the user
-            && !item.IsVisible(user))
-        {
-            return Unauthorized($"{user.Username} is not permitted to access item {item.Name}.");
         }
 
         var dtoOptions = new DtoOptions().AddClientFields(User);
@@ -587,12 +523,12 @@ public class UserLibraryController : BaseJellyfinApiController
     public ActionResult<IEnumerable<BaseItemDto>> GetLatestMedia(
         [FromQuery] Guid? userId,
         [FromQuery] Guid? parentId,
-        [FromQuery, ModelBinder(typeof(CommaDelimitedArrayModelBinder))] ItemFields[] fields,
-        [FromQuery, ModelBinder(typeof(CommaDelimitedArrayModelBinder))] BaseItemKind[] includeItemTypes,
+        [FromQuery, ModelBinder(typeof(CommaDelimitedCollectionModelBinder))] ItemFields[] fields,
+        [FromQuery, ModelBinder(typeof(CommaDelimitedCollectionModelBinder))] BaseItemKind[] includeItemTypes,
         [FromQuery] bool? isPlayed,
         [FromQuery] bool? enableImages,
         [FromQuery] int? imageTypeLimit,
-        [FromQuery, ModelBinder(typeof(CommaDelimitedArrayModelBinder))] ImageType[] enableImageTypes,
+        [FromQuery, ModelBinder(typeof(CommaDelimitedCollectionModelBinder))] ImageType[] enableImageTypes,
         [FromQuery] bool? enableUserData,
         [FromQuery] int limit = 20,
         [FromQuery] bool groupItems = true)
@@ -624,7 +560,7 @@ public class UserLibraryController : BaseJellyfinApiController
                 IsPlayed = isPlayed,
                 Limit = limit,
                 ParentId = parentId ?? Guid.Empty,
-                UserId = requestUserId,
+                User = user,
             },
             dtoOptions);
 
@@ -672,12 +608,12 @@ public class UserLibraryController : BaseJellyfinApiController
     public ActionResult<IEnumerable<BaseItemDto>> GetLatestMediaLegacy(
         [FromRoute, Required] Guid userId,
         [FromQuery] Guid? parentId,
-        [FromQuery, ModelBinder(typeof(CommaDelimitedArrayModelBinder))] ItemFields[] fields,
-        [FromQuery, ModelBinder(typeof(CommaDelimitedArrayModelBinder))] BaseItemKind[] includeItemTypes,
+        [FromQuery, ModelBinder(typeof(CommaDelimitedCollectionModelBinder))] ItemFields[] fields,
+        [FromQuery, ModelBinder(typeof(CommaDelimitedCollectionModelBinder))] BaseItemKind[] includeItemTypes,
         [FromQuery] bool? isPlayed,
         [FromQuery] bool? enableImages,
         [FromQuery] int? imageTypeLimit,
-        [FromQuery, ModelBinder(typeof(CommaDelimitedArrayModelBinder))] ImageType[] enableImageTypes,
+        [FromQuery, ModelBinder(typeof(CommaDelimitedCollectionModelBinder))] ImageType[] enableImageTypes,
         [FromQuery] bool? enableUserData,
         [FromQuery] int limit = 20,
         [FromQuery] bool groupItems = true)
@@ -698,10 +634,10 @@ public class UserLibraryController : BaseJellyfinApiController
     {
         if (item is Person)
         {
-            var hasMetdata = !string.IsNullOrWhiteSpace(item.Overview) && item.HasImage(ImageType.Primary);
-            var performFullRefresh = !hasMetdata && (DateTime.UtcNow - item.DateLastRefreshed).TotalDays >= 3;
+            var hasMetadata = !string.IsNullOrWhiteSpace(item.Overview) && item.HasImage(ImageType.Primary);
+            var performFullRefresh = !hasMetadata && (DateTime.UtcNow - item.DateLastRefreshed).TotalDays >= 3;
 
-            if (!hasMetdata)
+            if (!hasMetadata)
             {
                 var options = new MetadataRefreshOptions(new DirectoryService(_fileSystem))
                 {
@@ -726,12 +662,15 @@ public class UserLibraryController : BaseJellyfinApiController
         // Get the user data for this item
         var data = _userDataRepository.GetUserData(user, item);
 
-        // Set favorite status
-        data.IsFavorite = isFavorite;
+        if (data is not null)
+        {
+            // Set favorite status
+            data.IsFavorite = isFavorite;
 
-        _userDataRepository.SaveUserData(user, item, data, UserDataSaveReason.UpdateUserRating, CancellationToken.None);
+            _userDataRepository.SaveUserData(user, item, data, UserDataSaveReason.UpdateUserRating, CancellationToken.None);
+        }
 
-        return _userDataRepository.GetUserDataDto(item, user);
+        return _userDataRepository.GetUserDataDto(item, user)!;
     }
 
     /// <summary>
@@ -740,14 +679,17 @@ public class UserLibraryController : BaseJellyfinApiController
     /// <param name="user">The user.</param>
     /// <param name="item">The item.</param>
     /// <param name="likes">if set to <c>true</c> [likes].</param>
-    private UserItemDataDto UpdateUserItemRatingInternal(User user, BaseItem item, bool? likes)
+    private UserItemDataDto? UpdateUserItemRatingInternal(User user, BaseItem item, bool? likes)
     {
         // Get the user data for this item
         var data = _userDataRepository.GetUserData(user, item);
 
-        data.Likes = likes;
+        if (data is not null)
+        {
+            data.Likes = likes;
 
-        _userDataRepository.SaveUserData(user, item, data, UserDataSaveReason.UpdateUserRating, CancellationToken.None);
+            _userDataRepository.SaveUserData(user, item, data, UserDataSaveReason.UpdateUserRating, CancellationToken.None);
+        }
 
         return _userDataRepository.GetUserDataDto(item, user);
     }

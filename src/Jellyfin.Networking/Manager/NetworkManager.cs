@@ -11,7 +11,6 @@ using MediaBrowser.Common.Configuration;
 using MediaBrowser.Common.Net;
 using MediaBrowser.Model.Net;
 using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using static MediaBrowser.Controller.Extensions.ConfigurationExtensions;
@@ -28,7 +27,7 @@ public class NetworkManager : INetworkManager, IDisposable
     /// <summary>
     /// Threading lock for network properties.
     /// </summary>
-    private readonly object _initLock;
+    private readonly Lock _initLock;
 
     private readonly ILogger<NetworkManager> _logger;
 
@@ -36,7 +35,7 @@ public class NetworkManager : INetworkManager, IDisposable
 
     private readonly IConfiguration _startupConfig;
 
-    private readonly object _networkEventLock;
+    private readonly Lock _networkEventLock;
 
     /// <summary>
     /// Holds the published server URLs and the IPs to use them on.
@@ -58,7 +57,7 @@ public class NetworkManager : INetworkManager, IDisposable
     /// <summary>
     /// Dictionary containing interface addresses and their subnets.
     /// </summary>
-    private IReadOnlyList<IPData> _interfaces;
+    private List<IPData> _interfaces;
 
     /// <summary>
     /// Unfiltered user defined LAN subnets (<see cref="NetworkConfiguration.LocalNetworkSubnets"/>)
@@ -82,7 +81,6 @@ public class NetworkManager : INetworkManager, IDisposable
     /// <param name="configurationManager">The <see cref="IConfigurationManager"/> instance.</param>
     /// <param name="startupConfig">The <see cref="IConfiguration"/> instance holding startup parameters.</param>
     /// <param name="logger">Logger to use for messages.</param>
-#pragma warning disable CS8618 // Non-nullable field is uninitialized. : Values are set in UpdateSettings function. Compiler doesn't yet recognise this.
     public NetworkManager(IConfigurationManager configurationManager, IConfiguration startupConfig, ILogger<NetworkManager> logger)
     {
         ArgumentNullException.ThrowIfNull(logger);
@@ -95,17 +93,21 @@ public class NetworkManager : INetworkManager, IDisposable
         _interfaces = new List<IPData>();
         _macAddresses = new List<PhysicalAddress>();
         _publishedServerUrls = new List<PublishedServerUriOverride>();
-        _networkEventLock = new object();
+        _networkEventLock = new();
         _remoteAddressFilter = new List<IPNetwork>();
+
+        _ = bool.TryParse(startupConfig[DetectNetworkChangeKey], out var detectNetworkChange);
 
         UpdateSettings(_configurationManager.GetNetworkConfiguration());
 
-        NetworkChange.NetworkAddressChanged += OnNetworkAddressChanged;
-        NetworkChange.NetworkAvailabilityChanged += OnNetworkAvailabilityChanged;
+        if (detectNetworkChange)
+        {
+            NetworkChange.NetworkAddressChanged += OnNetworkAddressChanged;
+            NetworkChange.NetworkAvailabilityChanged += OnNetworkAvailabilityChanged;
+        }
 
         _configurationManager.NamedConfigurationUpdated += ConfigurationUpdated;
     }
-#pragma warning restore CS8618 // Non-nullable field is uninitialized.
 
     /// <summary>
     /// Event triggered on network changes.
@@ -237,7 +239,7 @@ public class NetworkManager : INetworkManager, IDisposable
                         var mac = adapter.GetPhysicalAddress();
 
                         // Populate MAC list
-                        if (adapter.NetworkInterfaceType != NetworkInterfaceType.Loopback && PhysicalAddress.None.Equals(mac))
+                        if (adapter.NetworkInterfaceType != NetworkInterfaceType.Loopback && !PhysicalAddress.None.Equals(mac))
                         {
                             macAddresses.Add(mac);
                         }
@@ -308,6 +310,7 @@ public class NetworkManager : INetworkManager, IDisposable
     /// <summary>
     /// Initializes internal LAN cache.
     /// </summary>
+    [MemberNotNull(nameof(_lanSubnets), nameof(_excludedSubnets))]
     private void InitializeLan(NetworkConfiguration config)
     {
         lock (_initLock)
@@ -412,7 +415,9 @@ public class NetworkManager : INetworkManager, IDisposable
                 interfaces.RemoveAll(x => x.AddressFamily == AddressFamily.InterNetworkV6);
             }
 
-            _interfaces = interfaces;
+            // Users may have complex networking configuration that multiple interfaces sharing the same IP address
+            // Only return one IP for binding, and let the OS handle the rest
+            _interfaces = interfaces.DistinctBy(iface => iface.Address).ToList();
         }
     }
 
@@ -585,6 +590,7 @@ public class NetworkManager : INetworkManager, IDisposable
     /// Reloads all settings and re-Initializes the instance.
     /// </summary>
     /// <param name="configuration">The <see cref="NetworkConfiguration"/> to use.</param>
+    [MemberNotNull(nameof(_lanSubnets), nameof(_excludedSubnets))]
     public void UpdateSettings(object configuration)
     {
         ArgumentNullException.ThrowIfNull(configuration);
@@ -696,7 +702,7 @@ public class NetworkManager : INetworkManager, IDisposable
                 return false;
             }
         }
-        else if (!_lanSubnets.Any(x => x.Contains(remoteIP)))
+        else if (!IsInLocalNetwork(remoteIP))
         {
             // Remote not enabled. So everyone should be LAN.
             return false;
@@ -737,7 +743,9 @@ public class NetworkManager : INetworkManager, IDisposable
     /// <inheritdoc/>
     public IReadOnlyList<IPData> GetAllBindInterfaces(bool individualInterfaces = false)
     {
-        if (_interfaces.Count > 0 || individualInterfaces)
+        var config = _configurationManager.GetNetworkConfiguration();
+        var localNetworkAddresses = config.LocalNetworkAddresses;
+        if ((localNetworkAddresses.Length > 0 && !string.IsNullOrWhiteSpace(localNetworkAddresses[0]) && _interfaces.Count > 0) || individualInterfaces)
         {
             return _interfaces;
         }
@@ -900,15 +908,30 @@ public class NetworkManager : INetworkManager, IDisposable
         return false;
     }
 
+    /// <summary>
+    ///  Get if the IPAddress is Link-local.
+    /// </summary>
+    /// <param name="address">The IP Address.</param>
+    /// <returns>Bool indicates if the address is link-local.</returns>
+    public bool IsLinkLocalAddress(IPAddress address)
+    {
+        ArgumentNullException.ThrowIfNull(address);
+        return NetworkConstants.IPv4RFC3927LinkLocal.Contains(address) || address.IsIPv6LinkLocal;
+    }
+
     /// <inheritdoc/>
     public bool IsInLocalNetwork(IPAddress address)
     {
         ArgumentNullException.ThrowIfNull(address);
 
-        // See conversation at https://github.com/jellyfin/jellyfin/pull/3515.
+        // Map IPv6 mapped IPv4 back to IPv4 (happens if Kestrel runs in dual-socket mode)
+        if (address.IsIPv4MappedToIPv6)
+        {
+            address = address.MapToIPv4();
+        }
+
         if ((TrustAllIPv6Interfaces && address.AddressFamily == AddressFamily.InterNetworkV6)
-            || address.Equals(IPAddress.Loopback)
-            || address.Equals(IPAddress.IPv6Loopback))
+            || IPAddress.IsLoopback(address))
         {
             return true;
         }
@@ -950,7 +973,7 @@ public class NetworkManager : INetworkManager, IDisposable
         bindPreference = string.Empty;
         int? port = null;
 
-        // Only consider subnets including the source IP, prefering specific overrides
+        // Only consider subnets including the source IP, preferring specific overrides
         List<PublishedServerUriOverride> validPublishedServerUrls;
         if (!isInExternalSubnet)
         {
@@ -974,7 +997,9 @@ public class NetworkManager : INetworkManager, IDisposable
             // Get interface matching override subnet
             var intf = _interfaces.OrderBy(x => x.Index).FirstOrDefault(x => data.Data.Subnet.Contains(x.Address));
 
-            if (intf?.Address is not null)
+            if (intf?.Address is not null
+                || (data.Data.AddressFamily == AddressFamily.InterNetwork && data.Data.Address.Equals(IPAddress.Any))
+                || (data.Data.AddressFamily == AddressFamily.InterNetworkV6 && data.Data.Address.Equals(IPAddress.IPv6Any)))
             {
                 // If matching interface is found, use override
                 bindPreference = data.OverrideUri;
@@ -1002,6 +1027,7 @@ public class NetworkManager : INetworkManager, IDisposable
         }
 
         _logger.LogDebug("{Source}: Matching bind address override found: {Address}", source, bindPreference);
+
         return true;
     }
 
@@ -1017,7 +1043,7 @@ public class NetworkManager : INetworkManager, IDisposable
         result = string.Empty;
 
         int count = _interfaces.Count;
-        if (count == 1 && (_interfaces[0].Equals(IPAddress.Any) || _interfaces[0].Equals(IPAddress.IPv6Any)))
+        if (count == 1 && (_interfaces[0].Address.Equals(IPAddress.Any) || _interfaces[0].Address.Equals(IPAddress.IPv6Any)))
         {
             // Ignore IPAny addresses.
             count = 0;
@@ -1040,6 +1066,7 @@ public class NetworkManager : INetworkManager, IDisposable
                 // If none exists, this will select the first external interface if there is one.
                 bindAddress = externalInterfaces
                     .OrderByDescending(x => x.Subnet.Contains(source))
+                    .ThenByDescending(x => x.Subnet.PrefixLength)
                     .ThenBy(x => x.Index)
                     .Select(x => x.Address)
                     .First();
@@ -1049,7 +1076,7 @@ public class NetworkManager : INetworkManager, IDisposable
                 return true;
             }
 
-            _logger.LogWarning("{Source}: External request received, no matching external bind address found, trying internal addresses.", source);
+            _logger.LogDebug("{Source}: External request received, no matching external bind address found, trying internal addresses", source);
         }
         else
         {
@@ -1057,6 +1084,7 @@ public class NetworkManager : INetworkManager, IDisposable
             // If none exists, this will select the first internal interface if there is one.
             bindAddress = _interfaces.Where(x => IsInLocalNetwork(x.Address))
                 .OrderByDescending(x => x.Subnet.Contains(source))
+                .ThenByDescending(x => x.Subnet.PrefixLength)
                 .ThenBy(x => x.Index)
                 .Select(x => x.Address)
                 .FirstOrDefault();
@@ -1081,13 +1109,17 @@ public class NetworkManager : INetworkManager, IDisposable
     private bool MatchesExternalInterface(IPAddress source, out string result)
     {
         // Get the first external interface address that isn't a loopback.
-        var extResult = _interfaces.Where(p => !IsInLocalNetwork(p.Address)).OrderBy(x => x.Index).ToArray();
+        var extResult = _interfaces
+            .Where(p => !IsInLocalNetwork(p.Address))
+            .Where(p => p.Address.AddressFamily.Equals(source.AddressFamily))
+            .Where(p => !IsLinkLocalAddress(p.Address))
+            .OrderBy(x => x.Index).ToArray();
 
         // No external interface found
         if (extResult.Length == 0)
         {
             result = string.Empty;
-            _logger.LogWarning("{Source}: External request received, but no external interface found. Need to route through internal network.", source);
+            _logger.LogDebug("{Source}: External request received, but no external interface found. Need to route through internal network", source);
             return false;
         }
 
@@ -1114,12 +1146,13 @@ public class NetworkManager : INetworkManager, IDisposable
         var logLevel = debug ? LogLevel.Debug : LogLevel.Information;
         if (_logger.IsEnabled(logLevel))
         {
-            _logger.Log(logLevel, "Defined LAN addresses: {0}", _lanSubnets.Select(s => s.Prefix + "/" + s.PrefixLength));
-            _logger.Log(logLevel, "Defined LAN exclusions: {0}", _excludedSubnets.Select(s => s.Prefix + "/" + s.PrefixLength));
-            _logger.Log(logLevel, "Using LAN addresses: {0}", _lanSubnets.Where(s => !_excludedSubnets.Contains(s)).Select(s => s.Prefix + "/" + s.PrefixLength));
-            _logger.Log(logLevel, "Using bind addresses: {0}", _interfaces.OrderByDescending(x => x.AddressFamily == AddressFamily.InterNetwork).Select(x => x.Address));
-            _logger.Log(logLevel, "Remote IP filter is {0}", config.IsRemoteIPFilterBlacklist ? "Blocklist" : "Allowlist");
-            _logger.Log(logLevel, "Filter list: {0}", _remoteAddressFilter.Select(s => s.Prefix + "/" + s.PrefixLength));
+            _logger.Log(logLevel, "Defined LAN subnets: {Subnets}", _lanSubnets.Select(s => s.Prefix + "/" + s.PrefixLength));
+            _logger.Log(logLevel, "Defined LAN exclusions: {Subnets}", _excludedSubnets.Select(s => s.Prefix + "/" + s.PrefixLength));
+            _logger.Log(logLevel, "Used LAN subnets: {Subnets}", _lanSubnets.Where(s => !_excludedSubnets.Contains(s)).Select(s => s.Prefix + "/" + s.PrefixLength));
+            _logger.Log(logLevel, "Filtered interface addresses: {Addresses}", _interfaces.OrderByDescending(x => x.AddressFamily == AddressFamily.InterNetwork).Select(x => x.Address));
+            _logger.Log(logLevel, "Bind Addresses {Addresses}", GetAllBindInterfaces(false).OrderByDescending(x => x.AddressFamily == AddressFamily.InterNetwork).Select(x => x.Address));
+            _logger.Log(logLevel, "Remote IP filter is {Type}", config.IsRemoteIPFilterBlacklist ? "Blocklist" : "Allowlist");
+            _logger.Log(logLevel, "Filtered subnets: {Subnets}", _remoteAddressFilter.Select(s => s.Prefix + "/" + s.PrefixLength));
         }
     }
 }

@@ -6,10 +6,12 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Serialization;
+using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Data.Entities;
 using Jellyfin.Data.Enums;
 using Jellyfin.Extensions;
+using MediaBrowser.Controller.Providers;
 using MediaBrowser.Controller.TV;
 using MediaBrowser.Model.Querying;
 
@@ -132,7 +134,7 @@ namespace MediaBrowser.Controller.Entities
         }
 
         /// <inheritdoc />
-        public override IEnumerable<BaseItem> GetRecursiveChildren(User user, InternalItemsQuery query)
+        public override IReadOnlyList<BaseItem> GetRecursiveChildren(User user, InternalItemsQuery query)
         {
             query.SetUser(user);
             query.Recursive = true;
@@ -143,7 +145,7 @@ namespace MediaBrowser.Controller.Entities
         }
 
         /// <inheritdoc />
-        protected override IEnumerable<BaseItem> GetEligibleChildrenForRecursiveChildren(User user)
+        protected override IReadOnlyList<BaseItem> GetEligibleChildrenForRecursiveChildren(User user)
         {
             return GetChildren(user, false);
         }
@@ -180,7 +182,7 @@ namespace MediaBrowser.Controller.Entities
             return _originalFolderViewTypes.Contains(viewType);
         }
 
-        protected override Task ValidateChildrenInternal(IProgress<double> progress, bool recursive, bool refreshChildMetadata, Providers.MetadataRefreshOptions refreshOptions, Providers.IDirectoryService directoryService, System.Threading.CancellationToken cancellationToken)
+        protected override Task ValidateChildrenInternal(IProgress<double> progress, bool recursive, bool refreshChildMetadata, bool allowRemoveRoot, MetadataRefreshOptions refreshOptions, IDirectoryService directoryService, CancellationToken cancellationToken)
         {
             return Task.CompletedTask;
         }

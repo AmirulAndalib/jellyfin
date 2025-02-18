@@ -20,6 +20,8 @@ public class ActivityLogWebSocketListener : BasePeriodicWebSocketListener<Activi
     /// </summary>
     private readonly IActivityManager _activityManager;
 
+    private bool _disposed;
+
     /// <summary>
     /// Initializes a new instance of the <see cref="ActivityLogWebSocketListener"/> class.
     /// </summary>
@@ -51,14 +53,15 @@ public class ActivityLogWebSocketListener : BasePeriodicWebSocketListener<Activi
     }
 
     /// <inheritdoc />
-    protected override void Dispose(bool dispose)
+    protected override async ValueTask DisposeAsyncCore()
     {
-        if (dispose)
+        if (!_disposed)
         {
             _activityManager.EntryCreated -= OnEntryCreated;
+            _disposed = true;
         }
 
-        base.Dispose(dispose);
+        await base.DisposeAsyncCore().ConfigureAwait(false);
     }
 
     /// <summary>
@@ -67,7 +70,9 @@ public class ActivityLogWebSocketListener : BasePeriodicWebSocketListener<Activi
     /// <param name="message">The message.</param>
     protected override void Start(WebSocketMessageInfo message)
     {
-        if (!message.Connection.AuthorizationInfo.User.HasPermission(PermissionKind.IsAdministrator))
+        if (!message.Connection.AuthorizationInfo.IsApiKey
+            && (message.Connection.AuthorizationInfo.User is null
+                || !message.Connection.AuthorizationInfo.User.HasPermission(PermissionKind.IsAdministrator)))
         {
             throw new AuthenticationException("Only admin users can retrieve the activity log.");
         }
@@ -75,8 +80,8 @@ public class ActivityLogWebSocketListener : BasePeriodicWebSocketListener<Activi
         base.Start(message);
     }
 
-    private async void OnEntryCreated(object? sender, GenericEventArgs<ActivityLogEntry> e)
+    private void OnEntryCreated(object? sender, GenericEventArgs<ActivityLogEntry> e)
     {
-        await SendData(true).ConfigureAwait(false);
+        SendData(true);
     }
 }

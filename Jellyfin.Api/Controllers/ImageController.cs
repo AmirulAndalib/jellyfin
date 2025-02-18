@@ -90,6 +90,7 @@ public class ImageController : BaseJellyfinApiController
     /// <param name="userId">User Id.</param>
     /// <response code="204">Image updated.</response>
     /// <response code="403">User does not have permission to delete the image.</response>
+    /// <response code="404">Item not found.</response>
     /// <returns>A <see cref="NoContentResult"/>.</returns>
     [HttpPost("UserImage")]
     [Authorize]
@@ -97,6 +98,7 @@ public class ImageController : BaseJellyfinApiController
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult> PostUserImage(
         [FromQuery] Guid? userId)
     {
@@ -107,7 +109,7 @@ public class ImageController : BaseJellyfinApiController
             return NotFound();
         }
 
-        if (!RequestHelpers.AssertCanUpdateUser(_userManager, HttpContext.User, requestUserId, true))
+        if (!RequestHelpers.AssertCanUpdateUser(HttpContext.User, user, true))
         {
             return StatusCode(StatusCodes.Status403Forbidden, "User is not allowed to update the image.");
         }
@@ -201,13 +203,18 @@ public class ImageController : BaseJellyfinApiController
         [FromQuery] Guid? userId)
     {
         var requestUserId = RequestHelpers.GetUserId(User, userId);
-        if (!RequestHelpers.AssertCanUpdateUser(_userManager, HttpContext.User, requestUserId, true))
+        var user = _userManager.GetUserById(requestUserId);
+        if (user is null)
+        {
+            return NotFound();
+        }
+
+        if (!RequestHelpers.AssertCanUpdateUser(HttpContext.User, user, true))
         {
             return StatusCode(StatusCodes.Status403Forbidden, "User is not allowed to delete the image.");
         }
 
-        var user = _userManager.GetUserById(requestUserId);
-        if (user?.ProfileImage is null)
+        if (user.ProfileImage is null)
         {
             return NoContent();
         }
@@ -289,7 +296,7 @@ public class ImageController : BaseJellyfinApiController
         [FromRoute, Required] ImageType imageType,
         [FromQuery] int? imageIndex)
     {
-        var item = _libraryManager.GetItemById(itemId);
+        var item = _libraryManager.GetItemById<BaseItem>(itemId, User.GetUserId());
         if (item is null)
         {
             return NotFound();
@@ -317,7 +324,7 @@ public class ImageController : BaseJellyfinApiController
         [FromRoute, Required] ImageType imageType,
         [FromRoute] int imageIndex)
     {
-        var item = _libraryManager.GetItemById(itemId);
+        var item = _libraryManager.GetItemById<BaseItem>(itemId, User.GetUserId());
         if (item is null)
         {
             return NotFound();
@@ -346,7 +353,7 @@ public class ImageController : BaseJellyfinApiController
         [FromRoute, Required] Guid itemId,
         [FromRoute, Required] ImageType imageType)
     {
-        var item = _libraryManager.GetItemById(itemId);
+        var item = _libraryManager.GetItemById<BaseItem>(itemId, User.GetUserId());
         if (item is null)
         {
             return NotFound();
@@ -390,7 +397,7 @@ public class ImageController : BaseJellyfinApiController
         [FromRoute, Required] ImageType imageType,
         [FromRoute] int imageIndex)
     {
-        var item = _libraryManager.GetItemById(itemId);
+        var item = _libraryManager.GetItemById<BaseItem>(itemId, User.GetUserId());
         if (item is null)
         {
             return NotFound();
@@ -433,7 +440,7 @@ public class ImageController : BaseJellyfinApiController
         [FromRoute, Required] int imageIndex,
         [FromQuery, Required] int newIndex)
     {
-        var item = _libraryManager.GetItemById(itemId);
+        var item = _libraryManager.GetItemById<BaseItem>(itemId, User.GetUserId());
         if (item is null)
         {
             return NotFound();
@@ -456,7 +463,7 @@ public class ImageController : BaseJellyfinApiController
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<IEnumerable<ImageInfo>>> GetItemImageInfos([FromRoute, Required] Guid itemId)
     {
-        var item = _libraryManager.GetItemById(itemId);
+        var item = _libraryManager.GetItemById<BaseItem>(itemId, User.GetUserId());
         if (item is null)
         {
             return NotFound();
@@ -559,7 +566,7 @@ public class ImageController : BaseJellyfinApiController
         [FromQuery] string? foregroundLayer,
         [FromQuery] int? imageIndex)
     {
-        var item = _libraryManager.GetItemById(itemId);
+        var item = _libraryManager.GetItemById<BaseItem>(itemId, User.GetUserId());
         if (item is null)
         {
             return NotFound();
@@ -637,7 +644,7 @@ public class ImageController : BaseJellyfinApiController
         [FromQuery] string? backgroundColor,
         [FromQuery] string? foregroundLayer)
     {
-        var item = _libraryManager.GetItemById(itemId);
+        var item = _libraryManager.GetItemById<BaseItem>(itemId, User.GetUserId());
         if (item is null)
         {
             return NotFound();
@@ -715,7 +722,7 @@ public class ImageController : BaseJellyfinApiController
         [FromQuery] string? foregroundLayer,
         [FromRoute, Required] int imageIndex)
     {
-        var item = _libraryManager.GetItemById(itemId);
+        var item = _libraryManager.GetItemById<BaseItem>(itemId, User.GetUserId());
         if (item is null)
         {
             return NotFound();
@@ -2086,6 +2093,8 @@ public class ImageController : BaseJellyfinApiController
         Response.ContentType = imageContentType ?? MediaTypeNames.Text.Plain;
         Response.Headers.Append(HeaderNames.Age, Convert.ToInt64((DateTime.UtcNow - dateImageModified).TotalSeconds).ToString(CultureInfo.InvariantCulture));
         Response.Headers.Append(HeaderNames.Vary, HeaderNames.Accept);
+
+        Response.Headers.ContentDisposition = "attachment";
 
         if (disableCaching)
         {
