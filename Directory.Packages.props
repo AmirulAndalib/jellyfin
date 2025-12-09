@@ -4,7 +4,7 @@
   </PropertyGroup>
   <!-- Run "dotnet list package (dash,dash)outdated" to see the latest versions of each package.-->
   <ItemGroup Label="Package Dependencies">
-    <PackageVersion Include="AsyncKeyedLock" Version="7.1.7" />
+    <PackageVersion Include="AsyncKeyedLock" Version="7.1.8" />
     <PackageVersion Include="AutoFixture.AutoMoq" Version="4.18.1" />
     <PackageVersion Include="AutoFixture.Xunit2" Version="4.18.1" />
     <PackageVersion Include="AutoFixture" Version="4.18.1" />
@@ -74,9 +74,9 @@
     <PackageVersion Include="SerilogAnalyzer" Version="0.15.0" />
     <PackageVersion Include="SharpFuzz" Version="2.2.0" />
     <!-- Pinned to 3.116.1 because https://github.com/jellyfin/jellyfin/pull/14255 -->
-    <PackageVersion Include="SkiaSharp" Version="3.116.1" />
-    <PackageVersion Include="SkiaSharp.HarfBuzz" Version="3.116.1" />
-    <PackageVersion Include="SkiaSharp.NativeAssets.Linux" Version="3.116.1" />
+    <PackageVersion Include="SkiaSharp" Version="[3.116.1]" />
+    <PackageVersion Include="SkiaSharp.HarfBuzz" Version="[3.116.1]" />
+    <PackageVersion Include="SkiaSharp.NativeAssets.Linux" Version="[3.116.1]" />
     <PackageVersion Include="SmartAnalyzers.MultithreadingAnalyzer" Version="1.1.31" />
     <PackageVersion Include="StyleCop.Analyzers" Version="1.2.0-beta.556" />
     <PackageVersion Include="Svg.Skia" Version="3.2.1" />
